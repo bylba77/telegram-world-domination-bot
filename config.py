@@ -1,8 +1,8 @@
 # config.py
 
 # --- Основные настройки ---
-TOKEN = "8227004815:AAFp0ANDx2BJN0fqN9tHXjPa7_kjgfqfhZs"  # Твой токен, конечно же :)
-ADMIN_ID = 705912224
+TOKEN = ""  # Твой токен, конечно же :)
+ADMIN_ID =
 
 # --- Игровой баланс ---
 START_BUDGET = 1000000
