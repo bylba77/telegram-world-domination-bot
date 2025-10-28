@@ -1004,6 +1004,8 @@ async def overview_countries_logic(message: types.Message):
     await message.answer(text, parse_mode="HTML", reply_markup=main_menu(message.from_user.id))
 
 
+# handlers.py
+
 async def produce_nuclear_logic(message: types.Message):
     user_id = message.from_user.id
     p = game_state.players[user_id]
@@ -1011,54 +1013,48 @@ async def produce_nuclear_logic(message: types.Message):
         p["budget"] -= config.NUKE_COST
         p["pending_nukes"] += 1
         p["actions_left"] -= 1
-        qol_penalty = random.randint(5, 10)
-        report_lines = []
-        for city_name, city_data in p["cities"].items():
-            old_qol = city_data['qol']
-            city_data['qol'] = max(0, old_qol - qol_penalty)
-            report_lines.append(f"  • {city_name}: {old_qol}% ↘️ {city_data['qol']}%")
 
         game_state.round_events.append({'type': 'NUKE_PRODUCED', 'country': p['country']})
 
+        # Возвращаем простое и понятное сообщение
         await message.answer(
             f"✅ Ядерная бомба запущена в производство.\n\n"
-            f"❗️Милитаризация экономики вызвала недовольство населения. Уровень жизни в городах снизился на {qol_penalty}%:\n"
-            + "\n".join(report_lines) +
-            f"\n\nОсталось действий: {p['actions_left']}",
+            f"Осталось действий: {p['actions_left']}",
             reply_markup=main_menu(user_id)
         )
     else:
         await message.answer(f"Недостаточно бюджета ({config.NUKE_COST}).", reply_markup=main_menu(user_id))
 
 
+# handlers.py
+
+# handlers.py
+
 async def create_shield_logic(message: types.Message):
     user_id = message.from_user.id
     p = game_state.players[user_id]
+    if p.get("shields", 0) >= config.MAX_TOTAL_SHIELDS:
+        return await message.answer(
+            f"🛡️ Ваша страна уже имеет максимальное количество щитов ({config.MAX_TOTAL_SHIELDS}). Строительство невозможно.",
+            reply_markup=main_menu(user_id)
+        )
     if p.get("shields_built_this_round", 0) >= config.MAX_SHIELDS_PER_ROUND:
-        return await message.answer(f"❌ Лимит щитов в этом раунде ({config.MAX_SHIELDS_PER_ROUND}).",
-                                    reply_markup=main_menu(user_id))
+        return await message.answer(
+            f"❌ Лимит щитов в этом раунде ({config.MAX_SHIELDS_PER_ROUND}).",
+            reply_markup=main_menu(user_id)
+        )
+
     if p["budget"] >= config.SHIELD_COST:
         p["budget"] -= config.SHIELD_COST
         p["shields"] += 1
         p["shields_built_this_round"] = p.get("shields_built_this_round", 0) + 1
         p["actions_left"] -= 1
 
-
-        qol_bonus = random.randint(2, 5)
-        report_lines = []
-        for city_name, city_data in p["cities"].items():
-            old_qol = city_data['qol']
-            city_data['qol'] = min(100, old_qol + qol_bonus)
-            report_lines.append(f"  • {city_name}: {old_qol}% ↗️ {city_data['qol']}%")
-
-
         game_state.round_events.append({'type': 'SHIELD_BUILT', 'country': p['country']})
 
         await message.answer(
-            f"🛡️ Щит создан! Всего: {p['shields']}.\n\n"
-            f"✅ Народ чувствует себя в безопасности! Уровень жизни в городах вырос на {qol_bonus}%:\n"
-            + "\n".join(report_lines) +
-            f"\n\nОсталось действий: {p['actions_left']}",
+            f"🛡️ Щит создан! Всего: {p['shields']}/{config.MAX_TOTAL_SHIELDS}.\n\n"
+            f"Осталось действий: {p['actions_left']}",
             reply_markup=main_menu(user_id)
         )
     else:

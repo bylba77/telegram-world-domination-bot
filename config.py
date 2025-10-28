@@ -31,6 +31,7 @@ MAX_BUNKER_LEVEL = 3
 # --- Настройки времени ---
 ROUND_DURATION = 600  # 10 минут
 ADMIN_CALL_BAN_DURATION = 120  # 2 минуты
+MAX_TOTAL_SHIELDS = 3
 
 
 DEVELOPMENT_LEVELS = {
