@@ -12,8 +12,9 @@
 
 ## Как запустить проект
 
-1.  Склонируйте репозиторий: `git clone [ссылка на твой репозиторий]`
+1.  Склонируйте репозиторий: https://github.com/bylba77/telegram-world-domination-bot
 2.  Создайте и активируйте виртуальное окружение: `python -m venv venv`
 3.  Установите все необходимые зависимости: `pip install -r requirements.txt`
 4.  Вставьте свой токен бота в файл `config.py`.
+
 5.  Запустите бота: `python main.py`
