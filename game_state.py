@@ -11,9 +11,11 @@ nickname_sessions = {}
 surrender_sessions = {}
 call_admin_bans = {}
 event_cooldowns = {}
+
 current_round = 1
 round_end_time = None
 round_notifications = {}
+
 round_events = []
 active_global_event = None
 is_processing_next_round = False

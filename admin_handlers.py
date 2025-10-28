@@ -252,10 +252,8 @@ async def admin_modify_choose_city(message: types.Message, state: FSMContext):
     await state.update_data(city_name=city_name)
     city = target_player['cities'][city_name]
     actions = []
-    if city['level'] < config.MAX_CITY_LEVEL:
-        actions.append([KeyboardButton(text="Улучшить на 1")])
-    if city['level'] > 0:
-        actions.append([KeyboardButton(text="Ухудшить на 1")])
+    if city['level'] < config.MAX_CITY_LEVEL: actions.append([KeyboardButton(text="Улучшить на 1")])
+    if city['level'] > 0: actions.append([KeyboardButton(text="Ухудшить на 1")])
 
     if not actions:
         await state.clear()
@@ -453,8 +451,8 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
                 event_class = EVENT_CLASSES[event_id]
                 if hasattr(event_class, 'on_start_effect'):
                     effect = event_class.on_start_effect
-                    if effect['type'] == 'income_modifier':
-                        global_income_modifier = 1.0 + effect['value']
+                    if effect and effect.get('type') == 'income_modifier':
+                        global_income_modifier = 1.0 + effect.get('value', 0)
 
             temp_income_modifier = 1.0
             if 'recession' in p.get('temp_effects', {}):

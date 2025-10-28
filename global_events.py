@@ -4,11 +4,7 @@ import random
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from events_base import BaseEvent
-import game_state  # Нам нужен доступ к состоянию игры
-
-
-
-# --- ОПРЕДЕЛЯЕМ ЛОГИКУ КАЖДОГО СОБЫТИЯ КАК ОТДЕЛЬНЫЙ КЛАСС ---
+import game_state
 
 class PandemicEvent(BaseEvent):
     ID = "PANDEMIC"
@@ -32,8 +28,7 @@ class PandemicEvent(BaseEvent):
                 p_data['temp_effects']['recession'] = {'rounds_left': 2}
                 try:
                     await self.bot.send_message(player_id, fail_message, parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def on_success(self, players, winner_player=None):
         success_message = ("**ПОБЕДА НАД БОЛЕЗНЬЮ!** Глобальный фонд собран! Учёные разработали вакцину. "
@@ -45,13 +40,12 @@ class PandemicEvent(BaseEvent):
                     city['qol'] = min(100, city['qol'] + qol_bonus)
                 try:
                     await self.bot.send_message(player_id, success_message)
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def handle_interaction(self, message, state, player):
         from states import GlobalEvent
         goal = self.goal_amount
-        progress = self.data['progress']
+        progress = self.data.get('progress', 0)
         await message.answer(
             f"**{self.name}**\n\nСобрано: **${progress} / ${goal}**\n\n"
             f"Ваш бюджет: ${player['budget']}\nСколько вы хотите внести в общий фонд?",
@@ -59,7 +53,6 @@ class PandemicEvent(BaseEvent):
             reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True)
         )
         await state.set_state(GlobalEvent.entering_contribution)
-
 
 class TechBreakthroughEvent(BaseEvent):
     ID = "TECH_BREAKTHROUGH"
@@ -80,8 +73,7 @@ class TechBreakthroughEvent(BaseEvent):
             if p_data.get("country"):
                 try:
                     await self.bot.send_message(player_id, fail_message)
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def on_success(self, players, winner_player=None):
         winner_player['income_modifier'] = winner_player.get('income_modifier', 1.0) + 0.15
@@ -91,8 +83,7 @@ class TechBreakthroughEvent(BaseEvent):
             if p_data.get("country"):
                 try:
                     await self.bot.send_message(player_id, success_msg, parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def handle_interaction(self, message, state, player):
         from states import GlobalEvent
@@ -108,7 +99,6 @@ class TechBreakthroughEvent(BaseEvent):
         )
         await state.set_state(GlobalEvent.entering_investment)
 
-
 class SolarFlareEvent(BaseEvent):
     ID = "SOLAR_FLARE"
     name = "Солнечная Вспышка"
@@ -119,11 +109,10 @@ class SolarFlareEvent(BaseEvent):
         return ("💥 **КОСМИЧЕСКАЯ АНОМАЛИЯ!** Мощный выброс корональной массы обрушился на планету. "
                 "**Все защитные щиты в мире временно отключены** на этот раунд!")
 
-
 class EnergyCrisisEvent(BaseEvent):
     ID = "ENERGY_CRISIS"
     name = "Энергетический коллапс"
-    button_text = "💉 Сделать взнос в фонд"
+    button_text = "🔧 Помочь в восстановлении"
     duration = 3
     goal_amount = 15000
     type = 'crisis'
@@ -135,25 +124,22 @@ class EnergyCrisisEvent(BaseEvent):
     async def on_fail(self, players):
         fail_message = ("**ПРОМЫШЛЕННЫЙ КОЛЛАПС!** Восстановить энергосеть не удалось. "
                         "В следующем раунде стоимость производства щитов и ракет будет удвоена из-за дефицита ресурсов.")
-        # Здесь в будущем можно будет добавить эффект повышения цен
         for player_id, p_data in players.items():
             if p_data.get("country"):
                 try:
                     await self.bot.send_message(player_id, fail_message, parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def on_success(self, players, winner_player=None):
         success_message = ("**СИСТЕМА ВОССТАНОВЛЕНА!** Энергосеть снова в строю! "
                            "Промышленность возвращается к работе. В благодарность за сотрудничество, "
                            "все страны получают +1 очко действия в следующем раунде.")
-        # Здесь в будущем будет эффект +1 ОД
         for player_id, p_data in players.items():
             if p_data.get("country"):
+                p_data['actions_left'] += 1
                 try:
                     await self.bot.send_message(player_id, success_message)
-                except Exception:
-                    pass
+                except Exception: pass
 
     async def handle_interaction(self, message, state, player):
         from states import GlobalEvent
@@ -168,12 +154,14 @@ class EnergyCrisisEvent(BaseEvent):
         await state.set_state(GlobalEvent.entering_contribution)
 
 
+# global_events.py
+
 class BlackMarketEvent(BaseEvent):
     ID = "BLACK_MARKET"
     name = "Чёрный рынок"
-    button_text = "✅ Инвестировать в проект"
+    button_text = "💰 Связаться с торговцем"
     duration = 2
-    goal_amount = 7500 # Цена за 2 ракеты
+    goal_amount = 7500  # Цена за 2 ракеты
     type = 'opportunity'
 
     async def get_start_message(self):
@@ -183,9 +171,11 @@ class BlackMarketEvent(BaseEvent):
     async def on_fail(self, players):
         fail_message = "Торговец оружием покинул регион, не дождавшись покупателей. Возможность упущена."
         for player_id, p_data in players.items():
-             if p_data.get("country"):
-                try: await self.bot.send_message(player_id, fail_message)
-                except Exception: pass
+            if p_data.get("country"):
+                try:
+                    await self.bot.send_message(player_id, fail_message)
+                except Exception:
+                    pass
 
     async def on_success(self, players, winner_player=None):
         winner_player['ready_nukes'] += 2
@@ -193,22 +183,37 @@ class BlackMarketEvent(BaseEvent):
                        f"Страна **{winner_player['country']}** заключила контракт на чёрном рынке и немедленно получила 2 готовые боеголовки!")
         for player_id, p_data in players.items():
             if p_data.get("country"):
-                try: await self.bot.send_message(player_id, success_msg, parse_mode="Markdown")
-                except Exception: pass
+                try:
+                    await self.bot.send_message(player_id, success_msg, parse_mode="Markdown")
+                except Exception:
+                    pass
 
+    # --- ИСПРАВЛЕННАЯ ЛОГИКА ВЗАИМОДЕЙСТВИЯ ---
     async def handle_interaction(self, message, state, player):
-        cost = self.goal_amount
-        from keyboards import main_menu
-        if player['budget'] >= cost:
-            # Сразу проводим транзакцию, так как это одиночная покупка
-            player['budget'] -= cost
-            await self.on_success(players=game_state.players, winner_player=player)
-            game_state.active_global_event = None # Завершаем событие
-            await message.answer(f"✅ Контракт подписан! Вы потратили ${cost}. Ваш новый бюджет: ${player['budget']}", reply_markup=main_menu(message.from_user.id))
-        else:
-            await message.answer(f"У вас недостаточно средств для заключения контракта. Требуется: ${cost}, у вас: ${player['budget']}", reply_markup=main_menu(message.from_user.id))
+        from keyboards import main_menu  # Отложенный импорт
+        from states import GlobalEvent  # Отложенный импорт
 
-# global_events.py
+        cost = self.goal_amount
+        if player['budget'] >= cost:
+            # Спрашиваем подтверждение
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="✅ Подтвердить сделку"), KeyboardButton(text="❌ Отказаться")]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            await message.answer(
+                f"Вы уверены, что хотите потратить ${cost} на 2 готовые ракеты?\n"
+                "Это рискованная сделка, но она может дать вам преимущество.",
+                reply_markup=keyboard
+            )
+            # Переводим бота в состояние ожидания подтверждения
+            await state.set_state(GlobalEvent.confirming_black_market)
+        else:
+            # Если денег нет, просто сообщаем об этом
+            await message.answer(
+                f"У вас недостаточно средств для заключения контракта. Требуется: ${cost}, у вас: ${player['budget']}",
+                reply_markup=main_menu(message.from_user.id)
+            )
 
 class GlobalEspionageEvent(BaseEvent):
     ID = "GLOBAL_ESPIONAGE"
@@ -220,12 +225,10 @@ class GlobalEspionageEvent(BaseEvent):
         return ("👁️ **ТОТАЛЬНАЯ СЛЕЖКА!** Произошла утечка финансовых данных всех мировых держав. "
                 "На этот раунд **бюджет каждой страны становится известен всем** в меню 'Обзор стран'!")
 
-# --- РЕЕСТР ВСЕХ СОБЫТИЙ ---
 EVENT_CLASSES = {
     "PANDEMIC": PandemicEvent,
     "TECH_BREAKTHROUGH": TechBreakthroughEvent,
     "SOLAR_FLARE": SolarFlareEvent,
     "ENERGY_CRISIS": EnergyCrisisEvent,
-    "BLACK_MARKET": BlackMarketEvent,
     "GLOBAL_ESPIONAGE": GlobalEspionageEvent,
 }

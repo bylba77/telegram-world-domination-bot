@@ -20,7 +20,7 @@ def military_menu():
     """Меню для военных действий."""
     keyboard = [
         [KeyboardButton(text="Произвести ядерную бомбу"), KeyboardButton(text="Создать щит")],
-        [KeyboardButton(text="Атаковать страну")],
+        [KeyboardButton(text="Атаковать страну"), KeyboardButton(text="👁️ Запустить шпионаж")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
