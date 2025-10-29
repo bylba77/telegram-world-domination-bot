@@ -6,6 +6,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from events_base import BaseEvent
 import game_state
 
+
 class PandemicEvent(BaseEvent):
     ID = "PANDEMIC"
     name = "Глобальная Пандемия"
@@ -153,15 +154,12 @@ class EnergyCrisisEvent(BaseEvent):
         )
         await state.set_state(GlobalEvent.entering_contribution)
 
-
-# global_events.py
-
 class BlackMarketEvent(BaseEvent):
     ID = "BLACK_MARKET"
     name = "Чёрный рынок"
     button_text = "💰 Связаться с торговцем"
     duration = 2
-    goal_amount = 7500  # Цена за 2 ракеты
+    goal_amount = 7500
     type = 'opportunity'
 
     async def get_start_message(self):
@@ -188,14 +186,12 @@ class BlackMarketEvent(BaseEvent):
                 except Exception:
                     pass
 
-    # --- ИСПРАВЛЕННАЯ ЛОГИКА ВЗАИМОДЕЙСТВИЯ ---
     async def handle_interaction(self, message, state, player):
-        from keyboards import main_menu  # Отложенный импорт
-        from states import GlobalEvent  # Отложенный импорт
+        from keyboards import main_menu
+        from states import GlobalEvent
 
         cost = self.goal_amount
         if player['budget'] >= cost:
-            # Спрашиваем подтверждение
             keyboard = ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="✅ Подтвердить сделку"), KeyboardButton(text="❌ Отказаться")]],
                 resize_keyboard=True,
@@ -206,10 +202,8 @@ class BlackMarketEvent(BaseEvent):
                 "Это рискованная сделка, но она может дать вам преимущество.",
                 reply_markup=keyboard
             )
-            # Переводим бота в состояние ожидания подтверждения
             await state.set_state(GlobalEvent.confirming_black_market)
         else:
-            # Если денег нет, просто сообщаем об этом
             await message.answer(
                 f"У вас недостаточно средств для заключения контракта. Требуется: ${cost}, у вас: ${player['budget']}",
                 reply_markup=main_menu(message.from_user.id)
@@ -225,10 +219,12 @@ class GlobalEspionageEvent(BaseEvent):
         return ("👁️ **ТОТАЛЬНАЯ СЛЕЖКА!** Произошла утечка финансовых данных всех мировых держав. "
                 "На этот раунд **бюджет каждой страны становится известен всем** в меню 'Обзор стран'!")
 
+
 EVENT_CLASSES = {
     "PANDEMIC": PandemicEvent,
     "TECH_BREAKTHROUGH": TechBreakthroughEvent,
     "SOLAR_FLARE": SolarFlareEvent,
     "ENERGY_CRISIS": EnergyCrisisEvent,
     "GLOBAL_ESPIONAGE": GlobalEspionageEvent,
+    "BLACK_MARKET": BlackMarketEvent
 }

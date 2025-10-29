@@ -10,100 +10,66 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRem
 import config
 import game_state
 from keyboards import main_menu
+# --- ИЗМЕНЕННЫЕ ИМПОРТЫ ---
+from handlers import log_action, generate_newspaper_report, format_admin_message  # Добавлен log_action и другие
+# ---------------------------
 from filters import PlayerFilter
-from states import AdminAttack, AdminModify, AdminBroadcast
+from states import AdminAttack, AdminModify, AdminBroadcast, AdminTools
 from global_events import EVENT_CLASSES
+
 admin_router = Router()
 
-# =====================================================================================
-# --- ГЛАВНОЕ МЕНЮ И ИНДИВИДУАЛЬНЫЕ ОБРАБОТЧИКИ КНОПОК ---
-# =====================================================================================
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Админка")
-async def admin_panel_menu(message: types.Message, state: FSMContext):
-    """Показывает главное меню админки."""
-    await state.clear()
-    keyboard = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="Начать игру (1-й раунд)"), KeyboardButton(text="Начать следующий раунд")],
-        [KeyboardButton(text="Просмотреть статистику всех"), KeyboardButton(text="Список готовых игроков")],
-        [KeyboardButton(text="Изменить уровень города"), KeyboardButton(text="Админ-удар")],
-        [KeyboardButton(text="Отправить сообщение"), KeyboardButton(text="Проверить таймер")],
-        [KeyboardButton(text="📰 Сводка новостей (для себя)"), KeyboardButton(text="Разослать газету")],
-        [KeyboardButton(text="⚙️ Тест: Запустить событие"), KeyboardButton(text="Рестарт игры")],
-        [KeyboardButton(text="Назад в главное меню")]
-    ], resize_keyboard=True)
-    await message.answer("Админка:", reply_markup=keyboard)
-
-# --- Обработчики для каждой кнопки ---
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Начать игру (1-й раунд)")
-async def handle_admin_start_game(message: types.Message, state: FSMContext):
-    await admin_start_game_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Начать следующий раунд")
-async def handle_admin_next_round(message: types.Message, state: FSMContext):
-    await admin_next_round_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Просмотреть статистику всех")
-async def handle_admin_show_all_stats(message: types.Message, state: FSMContext):
-    await admin_show_all_stats_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Список готовых игроков")
-async def handle_admin_show_ready_list(message: types.Message, state: FSMContext):
-    await admin_show_ready_list_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Изменить уровень города")
-async def handle_admin_modify_start(message: types.Message, state: FSMContext):
-    await admin_modify_start(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Админ-удар")
-async def handle_admin_attack_start(message: types.Message, state: FSMContext):
-    await admin_attack_start(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Отправить сообщение")
-async def handle_admin_broadcast_start(message: types.Message, state: FSMContext):
-    await admin_broadcast_start(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Проверить таймер")
-async def handle_admin_check_timer(message: types.Message, state: FSMContext):
-    await admin_check_timer_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "📰 Сводка новостей (для себя)")
-async def handle_admin_show_newspaper_private(message: types.Message, state: FSMContext):
-    await show_newspaper_logic_wrapper(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Разослать газету")
-async def handle_admin_broadcast_newspaper(message: types.Message, state: FSMContext):
-    from handlers import generate_newspaper_report
-    newspaper_text = await generate_newspaper_report()
-    if not newspaper_text:
-        return await message.answer("🗞 Новостей для рассылки нет.")
-    sent_count = 0
-    for uid, p in game_state.players.items():
-        if p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID:
-            try:
-                await message.bot.send_message(uid, newspaper_text, parse_mode="Markdown")
-                sent_count += 1
-            except Exception as e:
-                print(f"Error broadcasting newspaper to {uid}: {e}")
-    await message.answer(f"✅ Газета успешно разослана {sent_count} игрокам.")
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Рестарт игры")
-async def handle_admin_restart_game(message: types.Message, state: FSMContext):
-    await admin_restart_game_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "⚙️ Тест: Запустить событие")
-async def handle_admin_force_event(message: types.Message, state: FSMContext):
-    await admin_force_event_logic(message, state)
-
-@admin_router.message(PlayerFilter(is_admin=True), F.text == "Назад в главное меню")
-async def handle_admin_back_to_main(message: types.Message, state: FSMContext):
-    await message.answer("Главное меню", reply_markup=main_menu(message.from_user.id))
 
 # =====================================================================================
 # --- АДМИНСКИЕ FSM ПРОЦЕССЫ ---
 # =====================================================================================
 
+# --- FSM ВЫЗОВА СОБЫТИЯ ---
+async def admin_choose_event_start(message: types.Message, state: FSMContext):
+    """Начинает процесс выбора события для принудительного запуска."""
+    if game_state.active_global_event:
+        event_name = EVENT_CLASSES.get(game_state.active_global_event['id'],
+                                       type('', (object,), {'name': 'Неизвестное событие'})).name
+        return await message.answer(f"Тест невозможен: уже активно событие '{event_name}'.")
+
+    kb_rows = [[KeyboardButton(text=f"{event.name}")] for event in EVENT_CLASSES.values()]
+    kb_rows.append([KeyboardButton(text="Отмена")])
+    keyboard = ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True)
+
+    await message.answer("Выберите событие, которое хотите запустить:", reply_markup=keyboard)
+    await state.set_state(AdminTools.choosing_event_to_force)
+
+
+@admin_router.message(AdminTools.choosing_event_to_force)
+async def admin_force_event_logic(message: types.Message, state: FSMContext):
+    """Обрабатывает выбор админа и запускает выбранное событие."""
+    await state.clear()
+    text = message.text.strip()
+
+    if text == "Отмена":
+        return await message.answer("Действие отменено.", reply_markup=main_menu(config.ADMIN_ID))
+
+    chosen_event_class = next((event_class for event_class in EVENT_CLASSES.values() if event_class.name == text), None)
+
+    if not chosen_event_class:
+        return await message.answer("Событие не найдено. Попробуйте еще раз.", reply_markup=main_menu(config.ADMIN_ID))
+
+    new_event_data = {
+        "id": chosen_event_class.ID,
+        "progress": 0,
+        "rounds_left": chosen_event_class.duration
+    }
+    game_state.active_global_event = new_event_data
+    game_state.event_cooldowns[chosen_event_class.ID] = 3
+
+    event_object = chosen_event_class(message.bot, new_event_data)
+    start_msg = await event_object.get_start_message()
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"⚙️ <b>Администратор</b> вручную запустил событие: <b>{chosen_event_class.name}</b>."
+    await log_action(message.bot, log_text)
+    await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
+# --- FSM АДМИН-АТАКИ ---
 async def admin_attack_start(message: types.Message, state: FSMContext):
     targets = [p["country"] for uid, p in game_state.players.items() if uid != config.ADMIN_ID and p.get("country")]
     if not targets:
@@ -112,6 +78,7 @@ async def admin_attack_start(message: types.Message, state: FSMContext):
     await message.answer("Выбери страну-цель для админ-удара:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
     await state.set_state(AdminAttack.choosing_target)
+
 
 @admin_router.message(AdminAttack.choosing_target)
 async def admin_attack_choose_target(message: types.Message, state: FSMContext):
@@ -124,13 +91,13 @@ async def admin_attack_choose_target(message: types.Message, state: FSMContext):
         return await message.answer("Страна не найдена.")
     await state.update_data(target_uid=target_uid)
     target_player = game_state.players[target_uid]
-    # ИСПРАВЛЕНИЕ №1
     kb_rows = [[KeyboardButton(text=c + (" (разрушен)" if d.get("level", 1) == 0 else ""))] for c, d in
                target_player["cities"].items()]
     await message.answer(f"Цель — {text}. Выбери город для удара:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows + [[KeyboardButton(text="Отмена")]],
                                                           resize_keyboard=True))
     await state.set_state(AdminAttack.choosing_city)
+
 
 @admin_router.message(AdminAttack.choosing_city)
 async def admin_attack_choose_city(message: types.Message, state: FSMContext):
@@ -146,19 +113,30 @@ async def admin_attack_choose_city(message: types.Message, state: FSMContext):
     if target_player["cities"][city_name].get("level", 1) == 0:
         return await message.answer("Этот город уже разрушен.")
     result_text = ""
+    log_text = ""  # Переменная для лога
     if target_player["shields"] > 0:
         target_player["shields"] -= 1
         result_text = f"⚡ Админ-атака на {city_name} отражена щитом! (Осталось: {target_player['shields']})"
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🛡️ <b>Администратор</b> атаковал город <b>{city_name}</b> ({target_player['country']}), но удар был отражен щитом."
+        # ---------------------
     else:
         city = target_player["cities"][city_name]
         city["level"], city["income"], city["qol"] = 0, 0, 0
         result_text = f"💥 Админ разрушил город {city_name} в стране {target_player['country']}."
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"💥 <b>Администратор</b> разрушил город <b>{city_name}</b> ({target_player['country']})."
+        # ---------------------
+
+    await log_action(message.bot, log_text)  # Отправляем лог
     await message.answer(result_text, reply_markup=main_menu(config.ADMIN_ID))
     try:
         await message.bot.send_message(target_uid, f"⚡ Ваша страна подверглась админ-атаке! {result_text}")
     except Exception as e:
         print(f"Error notifying player about admin attack: {e}")
 
+
+# --- FSM ОТПРАВКИ СООБЩЕНИЯ ---
 async def admin_broadcast_start(message: types.Message, state: FSMContext):
     active_countries = [p['country'] for uid, p in game_state.players.items() if
                         p.get('country') and uid != config.ADMIN_ID]
@@ -168,6 +146,7 @@ async def admin_broadcast_start(message: types.Message, state: FSMContext):
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
     await state.set_state(AdminBroadcast.choosing_target)
 
+
 @admin_router.message(AdminBroadcast.choosing_target)
 async def admin_broadcast_choose_target(message: types.Message, state: FSMContext):
     text = message.text.strip()
@@ -175,22 +154,29 @@ async def admin_broadcast_choose_target(message: types.Message, state: FSMContex
         await state.clear()
         return await message.answer("Отправка сообщения отменена.", reply_markup=main_menu(config.ADMIN_ID))
     if text == "Всем игрокам":
-        await state.update_data(target='all')
+        await state.update_data(target='all', target_name='Всем игрокам')
     else:
         target_uid = next((uid for uid, pl in game_state.players.items() if pl.get("country") == text), None)
         if not target_uid:
             return await message.answer("Страна не найдена.")
-        await state.update_data(target=target_uid)
+        await state.update_data(target=target_uid, target_name=text)
     await message.answer("Теперь введите текст сообщения.", reply_markup=ReplyKeyboardRemove())
     await state.set_state(AdminBroadcast.typing_message)
+
 
 @admin_router.message(AdminBroadcast.typing_message)
 async def admin_broadcast_send(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     target = user_data.get('target')
-    from handlers import format_admin_message
+    target_name = user_data.get('target_name', 'N/A')
     formatted_message = format_admin_message(message.text)
     await state.clear()
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"✉️ <b>Администратор</b> отправил сообщение для: <b>{target_name}</b>.\nТекст: <i>{message.text}</i>"
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     if target == 'all':
         for uid, p in game_state.players.items():
             if p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID:
@@ -206,6 +192,8 @@ async def admin_broadcast_send(message: types.Message, state: FSMContext):
         except Exception as e:
             await message.answer(f"Ошибка отправки: {e}", reply_markup=main_menu(config.ADMIN_ID))
 
+
+# --- FSM ИЗМЕНЕНИЯ ГОРОДА ---
 async def admin_modify_start(message: types.Message, state: FSMContext):
     active_countries = [p['country'] for uid, p in game_state.players.items() if
                         p.get('country') and uid != config.ADMIN_ID]
@@ -215,6 +203,7 @@ async def admin_modify_start(message: types.Message, state: FSMContext):
     await message.answer("Выберите страну для изменения:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
     await state.set_state(AdminModify.choosing_country)
+
 
 @admin_router.message(AdminModify.choosing_country)
 async def admin_modify_choose_country(message: types.Message, state: FSMContext):
@@ -264,14 +253,18 @@ async def admin_modify_choose_city(message: types.Message, state: FSMContext):
                                                           resize_keyboard=True))
     await state.set_state(AdminModify.choosing_action)
 
+
 @admin_router.message(AdminModify.choosing_action)
 async def admin_modify_perform_action(message: types.Message, state: FSMContext):
     text = message.text.strip()
     user_data = await state.get_data()
     target_uid = user_data.get('target_uid')
+    target_player = game_state.players[target_uid]
     city_name = user_data.get('city_name')
-    city = game_state.players[target_uid]['cities'][city_name]
+    city = target_player['cities'][city_name]
+    old_level = city['level']
     await state.clear()
+
     if text == "Отмена":
         return await message.answer("Действие отменено.", reply_markup=main_menu(config.ADMIN_ID))
     if text == "Улучшить на 1" and city['level'] < config.MAX_CITY_LEVEL:
@@ -280,11 +273,19 @@ async def admin_modify_perform_action(message: types.Message, state: FSMContext)
         city['level'] -= 1
     else:
         return await message.answer("Неверная команда.", reply_markup=main_menu(config.ADMIN_ID))
+
     city['income'] = city['level'] * 500 if city['level'] > 0 else 0
     if text == "Улучшить на 1":
         city['qol'] = min(100, city['qol'] + random.randint(7, 15))
     else:
         city['qol'] = max(0, city['qol'] - random.randint(7, 15)) if city['level'] > 0 else 0
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    action_word = "улучшил" if text == "Улучшить на 1" else "ухудшил"
+    log_text = f"🛠️ <b>Администратор</b> {action_word} город <b>{city_name}</b> ({target_player['country']}) с {old_level} до {city['level']} уровня."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     await message.answer(f"Город {city_name} изменен. Новый уровень: {city['level']}.",
                          reply_markup=main_menu(config.ADMIN_ID))
     try:
@@ -293,9 +294,10 @@ async def admin_modify_perform_action(message: types.Message, state: FSMContext)
     except Exception as e:
         print(f"Ошибка уведомления об изменении города: {e}")
 
+
+# --- ОБРАБОТКА ОТВЕТОВ НА ВЫЗОВ ---
 @admin_router.callback_query(F.data.startswith("admin_call_"))
 async def handle_admin_call_response(callback: types.CallbackQuery):
-    """Обрабатывает нажатия админом на кнопки ответа на вызов."""
     action, player_id_str = callback.data.split(":")
     player_id = int(player_id_str)
     if player_id not in game_state.players:
@@ -319,26 +321,139 @@ async def handle_admin_call_response(callback: types.CallbackQuery):
         print(f"Не удалось отправить ответ игроку {player_id}: {e}")
     await callback.answer()
 
+
+# =====================================================================================
+# --- ГЛАВНОЕ МЕНЮ И ИНДИВИДУАЛЬНЫЕ ОБРАБОТЧИКИ КНОПОК ---
+# =====================================================================================
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Админка")
+async def admin_panel_menu(message: types.Message, state: FSMContext):
+    """Показывает главное меню админки."""
+    await state.clear()
+    keyboard = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="Начать игру (1-й раунд)"), KeyboardButton(text="Начать следующий раунд")],
+        [KeyboardButton(text="Просмотреть статистику всех"), KeyboardButton(text="Список готовых игроков")],
+        [KeyboardButton(text="Изменить уровень города"), KeyboardButton(text="Админ-удар")],
+        [KeyboardButton(text="Отправить сообщение"), KeyboardButton(text="Проверить таймер")],
+        [KeyboardButton(text="📰 Сводка новостей (для себя)"), KeyboardButton(text="Разослать газету")],
+        [KeyboardButton(text="⚙️ Вызвать событие (Тест)"), KeyboardButton(text="Рестарт игры")],
+        [KeyboardButton(text="Назад в главное меню")]
+    ], resize_keyboard=True)
+    await message.answer("Админка:", reply_markup=keyboard)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Начать игру (1-й раунд)")
+async def handle_admin_start_game(message: types.Message, state: FSMContext):
+    await admin_start_game_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Начать следующий раунд")
+async def handle_admin_next_round(message: types.Message, state: FSMContext):
+    await admin_next_round_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Просмотреть статистику всех")
+async def handle_admin_show_all_stats(message: types.Message, state: FSMContext):
+    await admin_show_all_stats_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Список готовых игроков")
+async def handle_admin_show_ready_list(message: types.Message, state: FSMContext):
+    await admin_show_ready_list_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Изменить уровень города")
+async def handle_admin_modify_start(message: types.Message, state: FSMContext):
+    await admin_modify_start(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Админ-удар")
+async def handle_admin_attack_start(message: types.Message, state: FSMContext):
+    await admin_attack_start(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Отправить сообщение")
+async def handle_admin_broadcast_start(message: types.Message, state: FSMContext):
+    await admin_broadcast_start(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Проверить таймер")
+async def handle_admin_check_timer(message: types.Message, state: FSMContext):
+    await admin_check_timer_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "📰 Сводка новостей (для себя)")
+async def handle_admin_show_newspaper_private(message: types.Message, state: FSMContext):
+    await show_newspaper_logic_wrapper(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Разослать газету")
+async def handle_admin_broadcast_newspaper(message: types.Message, state: FSMContext):
+    newspaper_text = await generate_newspaper_report()
+    if not newspaper_text:
+        return await message.answer("🗞 Новостей для рассылки нет.")
+    sent_count = 0
+    for uid, p in game_state.players.items():
+        if p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID:
+            try:
+                await message.bot.send_message(uid, newspaper_text, parse_mode="Markdown")
+                sent_count += 1
+            except Exception as e:
+                print(f"Error broadcasting newspaper to {uid}: {e}")
+    await message.answer(f"✅ Газета успешно разослана {sent_count} игрокам.")
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Рестарт игры")
+async def handle_admin_restart_game(message: types.Message, state: FSMContext):
+    await admin_restart_game_logic(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "⚙️ Вызвать событие (Тест)")
+async def handle_admin_choose_event(message: types.Message, state: FSMContext):
+    await admin_choose_event_start(message, state)
+
+
+@admin_router.message(PlayerFilter(is_admin=True), F.text == "Назад в главное меню")
+async def handle_admin_back_to_main(message: types.Message, state: FSMContext):
+    await message.answer("Главное меню", reply_markup=main_menu(message.from_user.id))
+
+
 # =====================================================================================
 # --- АДМИНСКИЕ ЛОГИЧЕСКИЕ БЛОКИ ---
 # =====================================================================================
 
-def calculate_qol_bonus(qol):
-    if qol >= 90: return 1.30
-    if qol >= 80: return 1.20
-    if qol > 50:
-        bonus_percent = (qol - 50) // 2
-        return 1 + (bonus_percent / 100)
-    if qol < 50:
-        penalty_percent = (50 - qol) // 2
-        return 1 - (penalty_percent / 100)
-    return 1.0
+def calculate_qol_bonus(city_data):
+    qol = city_data.get('qol', 0)
+    is_ruined = city_data.get('ruined', False)
+
+    base_multiplier = 1.0
+    if qol >= 90:
+        base_multiplier = 1.30
+    elif qol >= 80:
+        base_multiplier = 1.20
+    elif qol > 50:
+        base_multiplier = 1 + ((qol - 50) / 100 * 0.5)  # Плавный бонус
+    elif qol < 50:
+        base_multiplier = 1 - ((50 - qol) / 100)  # Плавный штраф
+
+    if is_ruined and base_multiplier > 1.0:
+        bonus = base_multiplier - 1.0
+        return 1.0 + (bonus / 2)
+
+    return base_multiplier
+
 
 async def admin_start_game_logic(message: types.Message, state: FSMContext):
     if game_state.round_end_time is not None:
         return await message.answer("Игра уже идет.", reply_markup=main_menu(config.ADMIN_ID))
     game_state.round_end_time = time.time() + config.ROUND_DURATION
     game_state.round_notifications = {'5_min': False, '3_min': False, '1_min': False, 'end': False}
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = "🎉 <b>Игра началась!</b> Администратор запустил <b>Раунд 1</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     msg = "🎉 <b>Игра началась! Раунд 1 запущен.</b>"
     for uid, p in game_state.players.items():
         if p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID:
@@ -350,17 +465,16 @@ async def admin_start_game_logic(message: types.Message, state: FSMContext):
 
 
 async def admin_next_round_logic(message: types.Message, state: FSMContext):
-    # --- ЗАЩИТА ОТ МНОГОКРАТНОГО НАЖАТИЯ ---
     if game_state.is_processing_next_round:
         return await message.answer("⏳ Пожалуйста, подождите, идёт обработка предыдущего раунда...")
 
     game_state.is_processing_next_round = True
     try:
-        # --- ВЕСЬ КОД ФУНКЦИИ НАХОДИТСЯ ВНУТРИ БЛОКА TRY ---
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🌐 <b>Администратор</b> запустил <b>Раунд {game_state.current_round + 1}</b>."
+        await log_action(message.bot, log_text)
+        # ---------------------
 
-
-
-        # 1. Сначала обновляем кулдауны
         cooldowns_to_remove = []
         for event_id, rounds_left in game_state.event_cooldowns.items():
             game_state.event_cooldowns[event_id] -= 1
@@ -369,47 +483,43 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
         for event_id in cooldowns_to_remove:
             del game_state.event_cooldowns[event_id]
 
-        # 2. Проверяем, не закончилось ли текущее событие
         if game_state.active_global_event:
             game_state.active_global_event['rounds_left'] -= 1
             if game_state.active_global_event['rounds_left'] <= 0:
                 event_id = game_state.active_global_event['id']
                 event_class = EVENT_CLASSES[event_id]
                 event_object = event_class(message.bot, game_state.active_global_event)
-
                 await event_object.on_fail(game_state.players)
-
+                log_text = f"⌛️ Событие <b>'{event_class.name}'</b> провалилось по истечению времени."
+                await log_action(message.bot, log_text)
+                await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
                 game_state.event_cooldowns[event_id] = 3
                 game_state.active_global_event = None
 
-        # 3. Шанс на запуск нового события
-        elif random.random() < 0.33:
+        elif random.random() < 0.33:  # 33% шанс на событие
             available_events = [eid for eid in EVENT_CLASSES.keys() if eid not in game_state.event_cooldowns]
-
             if available_events:
                 event_id = random.choice(available_events)
                 event_class = EVENT_CLASSES[event_id]
-
                 new_event_data = {
                     "id": event_id,
                     "progress": 0,
                     "rounds_left": event_class.duration
                 }
+
                 game_state.active_global_event = new_event_data
                 game_state.event_cooldowns[event_id] = 3
-
                 event_object = event_class(message.bot, new_event_data)
                 start_msg = await event_object.get_start_message()
-
+                log_text = f"🌍 Случайно началось новое событие: <b>{event_class.name}</b>."
+                await log_action(message.bot, log_text)
+                await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
                 for uid, p in game_state.players.items():
                     if p.get("country") and not p.get("eliminated"):
                         await message.bot.send_message(uid, start_msg, parse_mode="Markdown")
                 await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) Запущено событие: {event_class.name}")
 
-        # Очищаем блокнот репортёра для нового раунда
         game_state.round_events.clear()
-
-        # --- НАЧАЛО НОВОГО РАУНДА ---
         game_state.current_round += 1
         game_state.round_end_time = time.time() + config.ROUND_DURATION
         game_state.round_notifications = {'5_min': False, '3_min': False, '1_min': False, 'end': False}
@@ -417,7 +527,6 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
         for uid, p in game_state.players.items():
             if not p.get('country') or p.get('eliminated'): continue
 
-            # Обнуляем счетчики раунда
             p['ready_nukes'] += p.get('pending_nukes', 0)
             p['pending_nukes'] = 0
             p['actions_left'] = 5 if game_state.current_round == 10 else 4
@@ -427,7 +536,6 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
             p['social_programs_this_round'] = 0
             p['ready_for_next_round'] = False
 
-            # Обновляем временные эффекты
             effects_to_remove = []
             if 'temp_effects' in p:
                 for effect_name, effect_data in p['temp_effects'].items():
@@ -441,7 +549,6 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
                 for effect_name in effects_to_remove:
                     del p['temp_effects'][effect_name]
 
-            # Рассчитываем сложный доход
             total_income = 0
             income_details = []
 
@@ -462,7 +569,7 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
 
             for city_name, city_data in p.get('cities', {}).items():
                 base_income = city_data.get('income', 0)
-                qol_multiplier = calculate_qol_bonus(city_data.get('qol', 0))
+                qol_multiplier = calculate_qol_bonus(city_data)
 
                 final_income = int(
                     base_income * global_income_modifier * permanent_modifier * temp_income_modifier * qol_multiplier)
@@ -479,7 +586,6 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
 
             p['budget'] += total_income
 
-            # Формируем и отправляем сообщение игроку
             income_report = f"Доход: **${total_income}**.\n"
             if income_details:
                 income_report += "*Детализация дохода:*\n" + "\n".join(income_details) + "\n"
@@ -497,8 +603,8 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
         await message.answer(f"✅ Раунд {game_state.current_round} начат!", reply_markup=main_menu(config.ADMIN_ID))
 
     finally:
-        # --- СНИМАЕМ ЗАМОК В ЛЮБОМ СЛУЧАЕ ---
         game_state.is_processing_next_round = False
+
 
 async def admin_restart_game_logic(message: types.Message, state: FSMContext):
     admin_data = game_state.players.get(config.ADMIN_ID)
@@ -507,7 +613,14 @@ async def admin_restart_game_logic(message: types.Message, state: FSMContext):
     game_state.current_round, game_state.round_end_time = 1, None
     game_state.round_events.clear()
     game_state.active_global_event = None
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = "🔥 <b>Администратор</b> полностью перезапустил игру. Все данные сброшены."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     await message.answer("🔥 Игра полностью сброшена!", reply_markup=main_menu(config.ADMIN_ID))
+
 
 async def admin_show_all_stats_logic(message: types.Message, state: FSMContext):
     active_players = [p for p in game_state.players.values() if p.get('country')]
@@ -526,6 +639,7 @@ async def admin_show_all_stats_logic(message: types.Message, state: FSMContext):
         stats_text += "—————————\n"
     await message.answer(stats_text, parse_mode="HTML")
 
+
 async def admin_show_ready_list_logic(message: types.Message, state: FSMContext):
     active_players = [p for uid, p in game_state.players.items() if
                       p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID]
@@ -538,6 +652,7 @@ async def admin_show_ready_list_logic(message: types.Message, state: FSMContext)
     if not_ready: text += f"❌ Не готовы ({len(not_ready)}):\n" + ", ".join(not_ready) + "\n"
     await message.answer(text, parse_mode="HTML")
 
+
 async def admin_check_timer_logic(message: types.Message, state: FSMContext):
     if game_state.round_end_time is None:
         return await message.answer("Таймер раунда неактивен.")
@@ -547,30 +662,10 @@ async def admin_check_timer_logic(message: types.Message, state: FSMContext):
         status += f"• {readable}: {'✅' if game_state.round_notifications.get(key) else '❌'}\n"
     await message.answer(status, parse_mode="HTML")
 
+
 async def show_newspaper_logic_wrapper(message: types.Message, state: FSMContext):
-    from handlers import generate_newspaper_report
     newspaper_text = await generate_newspaper_report()
     if newspaper_text:
         await message.answer(newspaper_text, parse_mode="Markdown")
     else:
         await message.answer("🗞 В мире пока затишье. Новостей по итогам прошлого раунда нет.")
-
-async def admin_force_event_logic(message: types.Message, state: FSMContext):
-    from global_events import EVENT_CLASSES
-    if game_state.active_global_event:
-        return await message.answer(
-            f"Тест невозможен: уже активно событие '{game_state.active_global_event['name']}'.")
-    event_id = random.choice(list(EVENT_CLASSES.keys()))
-    event_data = EVENT_CLASSES[event_id]
-    game_state.active_global_event = {
-        "id": event_id, "name": event_data["name"],
-        "progress": 0, "rounds_left": event_data["duration"]
-    }
-    start_msg = event_data["start_message"].format(goal_amount=event_data.get("goal_amount", 0))
-    for uid, p in game_state.players.items():
-        if p.get("country") and not p.get("eliminated"):
-            try:
-                await message.bot.send_message(uid, start_msg, parse_mode="Markdown")
-            except Exception as e:
-                print(f"Error broadcasting test event to {uid}: {e}")
-    await message.answer(f"✅ Тестовое событие '{event_data['name']}' успешно запущено!")

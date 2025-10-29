@@ -9,35 +9,61 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
                            InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove)
 
+# Импортируем наши модули
 import config
 import game_state
 from keyboards import (main_menu, construction_menu, diplomacy_menu, military_menu)
 from newspaper_templates import TEMPLATES
 from filters import PlayerFilter
-from states import (Registration, Attack, Negotiation, Surrender, Upgrade, LendLease, SocialProgram, GlobalEvent, Bunker,CorsairChoice,Espionage)
+from states import (Registration, Attack, Negotiation, Surrender, Upgrade, LendLease, SocialProgram, GlobalEvent,
+                    Bunker,
+                    CorsairChoice, Espionage)
 from global_events import EVENT_CLASSES
 
 router = Router()
 
 
 # =====================================================================================
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИЯ И ФУНКЦИЯ-ФИЛЬТР ---
+# --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ЛОГИРОВАНИЯ ---
+# =====================================================================================
+
+async def log_action(bot, text: str):
+    """Отправляет отформатрованное сообщение в лог-канал."""
+    if not hasattr(config, 'LOG_CHANNEL_ID') or not config.LOG_CHANNEL_ID:
+        print(f"Log channel ID not configured. Log: {text}")
+        return
+    try:
+        await bot.send_message(config.LOG_CHANNEL_ID, text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Error sending log to channel: {e}")
+
+
+# =====================================================================================
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 # =====================================================================================
 
 def calculate_upgrade_cost(city_level):
+    """Рассчитывает стоимость улучшения города на основе его текущего уровня."""
     return config.BASE_UPGRADE_COST + (city_level * config.UPGRADE_COST_INCREASE)
 
+
 def format_admin_message(text):
+    """Красиво форматирует сообщение от админа (остается здесь для импорта в админ-файл)."""
     header = "🔔 <b>Сообщение от администратора</b>"
     line = "➖➖➖➖➖➖➖➖➖➖➖"
     return f"{line}\n{header}\n{line}\n\n{text}\n\n{line}"
 
+
 def is_player_in_game(message: types.Message) -> bool:
+    """Вспомогательная функция-фильтр для проверки, зарегистрирован ли игрок."""
     user_id = message.from_user.id
     return user_id in game_state.players and game_state.players[user_id].get("country")
 
+
 async def not_in_game_answer(message: types.Message):
+    """Стандартный ответ для незарегистрированных игроков."""
     await message.answer("Я не могу найти вас в списке игроков. Пожалуйста, отправьте /start, чтобы начать заново.")
+
 
 def get_development_status(avg_level):
     """Преобразует средний уровень городов в текстовый статус."""
@@ -47,6 +73,7 @@ def get_development_status(avg_level):
             status = name
     return status
 
+
 def get_nation_status(avg_qol):
     """Преобразует средний QoL в текстовый статус."""
     status = "Неизвестно"
@@ -54,12 +81,15 @@ def get_nation_status(avg_qol):
         if avg_qol >= level:
             status = name
     return status
+
+
 # =====================================================================================
 # --- РЕГИСТРАЦИЯ И СИСТЕМНЫЕ КОМАНДЫ ---
 # =====================================================================================
 
 @router.message(Command(commands=["start"]))
 async def start_command(message: types.Message, state: FSMContext):
+    """Обрабатывает команду /start, начинает процесс регистрации."""
     await state.clear()
     user_id = message.from_user.id
     if user_id not in game_state.players:
@@ -91,7 +121,6 @@ async def start_command(message: types.Message, state: FSMContext):
 
 @router.message(Registration.choosing_country)
 async def process_country_selection(message: types.Message, state: FSMContext):
-    """Обрабатывает выбор страны и переходит к вводу никнейма."""
     user_id, text = message.from_user.id, message.text.strip()
     if text not in config.countries:
         return await message.answer("Пожалуйста, выберите страну из списка.")
@@ -100,7 +129,8 @@ async def process_country_selection(message: types.Message, state: FSMContext):
 
     player = game_state.players[user_id]
     player["country"] = text
-    player["cities"] = {city: {"level": 1, "income": 500, "qol": 35, "bunker_level": 0, 'ruined': False} for city in config.countries[text]}
+    player["cities"] = {city: {"level": 1, "income": 500, "qol": 35, "bunker_level": 0, 'ruined': False} for city in
+                        config.countries[text]}
 
     await state.set_state(Registration.entering_nickname)
     await message.answer(f"Вы выбрали {text}. Теперь введите ваш игровой никнейм:", reply_markup=ReplyKeyboardRemove())
@@ -108,7 +138,6 @@ async def process_country_selection(message: types.Message, state: FSMContext):
 
 @router.message(Registration.entering_nickname)
 async def process_nickname(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод никнейма и завершает регистрацию."""
     if not message.text:
         return await message.answer("Пожалуйста, отправьте ваш никнейм в виде обычного текста.")
 
@@ -116,8 +145,15 @@ async def process_nickname(message: types.Message, state: FSMContext):
     if not nickname or len(nickname) > 15:
         return await message.answer("Никнейм не может быть пустым и должен быть короче 15 символов.")
 
-    game_state.players[user_id]["nickname"] = nickname
+    player = game_state.players[user_id]
+    player["nickname"] = nickname
     await state.clear()
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"✅ <b>{player['country']} ({nickname})</b> присоединился(-ась) к игре."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     await message.answer(f"Отлично, {nickname}! Вы в игре. Удачи!", reply_markup=main_menu(user_id))
 
 
@@ -128,6 +164,35 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         return await message.answer("Нет активных команд для отмены.", reply_markup=main_menu(message.from_user.id))
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=main_menu(message.from_user.id))
+
+
+# =====================================================================================
+# --- ОБРАБОТЧИКИ МЕНЮ И ПОДМЕНЮ ---
+# =====================================================================================
+
+@router.message(PlayerFilter(is_admin=False), F.text == "🏢 Строительство")
+async def show_construction_menu(message: types.Message):
+    if not is_player_in_game(message): return await not_in_game_answer(message)
+    await message.answer("Вы вошли в меню строительства и развития.", reply_markup=construction_menu())
+
+
+@router.message(PlayerFilter(is_admin=False), F.text == "💥 Военное дело")
+async def show_military_menu(message: types.Message):
+    if not is_player_in_game(message): return await not_in_game_answer(message)
+    actions_left = game_state.players[message.from_user.id].get('actions_left', 0)
+    await message.answer(f"Вы вошли в военный штаб. Действий осталось: {actions_left}", reply_markup=military_menu())
+
+
+@router.message(PlayerFilter(is_admin=False), F.text == "🏛️ Политика")
+async def show_diplomacy_menu(message: types.Message):
+    if not is_player_in_game(message): return await not_in_game_answer(message)
+    await message.answer("Вы вошли в министерство иностранных дел.", reply_markup=diplomacy_menu())
+
+
+@router.message(PlayerFilter(is_admin=False), F.text == "⬅️ Назад")
+async def back_to_main_menu(message: types.Message):
+    if not is_player_in_game(message): return await not_in_game_answer(message)
+    await message.answer("Вы вернулись в главное меню.", reply_markup=main_menu(message.from_user.id))
 
 
 # =====================================================================================
@@ -146,16 +211,6 @@ async def overview_countries_handler(message: types.Message):
     await overview_countries_logic(message)
 
 
-@router.message(PlayerFilter(is_admin=False), F.text == "📰 Сводка новостей")
-async def show_newspaper_handler(message: types.Message):
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    newspaper_text = await generate_newspaper_report()
-    if newspaper_text:
-        await message.answer(newspaper_text, parse_mode="Markdown")
-    else:
-        await message.answer("🗞 В мире пока затишье. Новостей по итогам прошлого раунда нет.")
-
-
 @router.message(PlayerFilter(is_admin=False), F.text.in_({"✅ Я готов", "❌ Отменить готовность"}))
 async def toggle_ready_status_handler(message: types.Message):
     if not is_player_in_game(message): return await not_in_game_answer(message)
@@ -168,49 +223,9 @@ async def call_admin_handler(message: types.Message):
     await call_admin_logic(message)
 
 
-@router.message(PlayerFilter(is_admin=False), F.text == "Произвести ядерную бомбу")
-async def produce_nuclear_handler(message: types.Message):
-    if game_state.active_global_event and game_state.active_global_event.get('id') == "ENERGY_CRISIS":
-        return await message.answer("❗️**Энергетический коллапс!** Промышленность остановлена, производство ракет невозможно.")
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    if game_state.players[message.from_user.id]['actions_left'] <= 0:
-        return await message.answer("❌ У вас больше нет действий в этом раунде.", reply_markup=main_menu(message.from_user.id))
-    await produce_nuclear_logic(message)
-
-@router.message(PlayerFilter(is_admin=False), F.text == "Создать щит")
-async def create_shield_handler(message: types.Message):
-    if game_state.active_global_event and game_state.active_global_event.get('id') == "ENERGY_CRISIS":
-        return await message.answer("❗️**Энергетический коллапс!** Промышленность остановлена, производство щитов невозможно.")
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    if game_state.players[message.from_user.id]['actions_left'] <= 0:
-        return await message.answer("❌ У вас больше нет действий в этом раунде.", reply_markup=main_menu(message.from_user.id))
-    await create_shield_logic(message)
-
-
-@router.message(PlayerFilter(is_admin=False), F.text == "🏢 Строительство")
-async def show_construction_menu(message: types.Message):
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    await message.answer("Вы вошли в меню строительства и развития.", reply_markup=construction_menu())
-
-@router.message(PlayerFilter(is_admin=False), F.text == "💥 Военное дело")
-async def show_military_menu(message: types.Message):
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    actions_left = game_state.players[message.from_user.id].get('actions_left', 0)
-    await message.answer(f"Вы вошли в военный штаб. Действий осталось: {actions_left}", reply_markup=military_menu())
-
-@router.message(PlayerFilter(is_admin=False), F.text == "🏛️ Политика")
-async def show_diplomacy_menu(message: types.Message):
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    await message.answer("Вы вошли в министерство иностранных дел.", reply_markup=diplomacy_menu())
-
-@router.message(PlayerFilter(is_admin=False), F.text == "⬅️ Назад")
-async def back_to_main_menu(message: types.Message):
-    if not is_player_in_game(message): return await not_in_game_answer(message)
-    await message.answer("Вы вернулись в главное меню.", reply_markup=main_menu(message.from_user.id))
 # =====================================================================================
 # --- FSM ПРОЦЕССЫ ИГРОКА ---
 # =====================================================================================
-# handlers.py
 
 # --- Шпионаж ---
 @router.message(PlayerFilter(is_admin=False), F.text == "👁️ Запустить шпионаж")
@@ -224,12 +239,10 @@ async def espionage_start(message: types.Message, state: FSMContext):
     if player['budget'] < config.SPY_COST:
         return await message.answer(f"Недостаточно средств для шпионажа. Требуется ${config.SPY_COST}.",
                                     reply_markup=main_menu(user_id))
-
     targets = [p["country"] for uid, p in game_state.players.items() if
                uid != user_id and p.get("country") and not p.get("eliminated")]
     if not targets:
         return await message.answer("Нет других стран для шпионажа.", reply_markup=main_menu(user_id))
-
     kb_rows = [[KeyboardButton(text=c)] for c in targets] + [[KeyboardButton(text="Отмена")]]
     await message.answer(f"Запуск шпионской операции будет стоить ${config.SPY_COST} и 1 очко действия.\n\n"
                          "Выберите цель для разведки:",
@@ -242,28 +255,24 @@ async def espionage_process_target(message: types.Message, state: FSMContext):
     await state.clear()
     target_country = message.text.strip()
     user_id = message.from_user.id
-
     if target_country == "Отмена":
         return await message.answer("Операция отменена.", reply_markup=main_menu(user_id))
-
     target_player_data = next((p for p in game_state.players.values() if p.get("country") == target_country), None)
     if not target_player_data:
         return await message.answer("Цель не найдена.", reply_markup=main_menu(user_id))
-
     player = game_state.players[user_id]
-
-    # Повторная проверка ресурсов
     if player['actions_left'] <= 0 or player['budget'] < config.SPY_COST:
         return await message.answer("Недостаточно ресурсов. Операция отменена.", reply_markup=main_menu(user_id))
-
-    # Списываем ресурсы
     player['budget'] -= config.SPY_COST
     player['actions_left'] -= 1
 
-    # Выбираем случайный тип разведданных
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"👁️ <b>{player['country']}</b> запустил(а) шпионаж против <b>{target_country}</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     intel_type = random.choice(['budget', 'nukes', 'shields', 'bunker'])
     report = f"**Секретный отчет по стране {target_country}:**\n\n"
-
     if intel_type == 'budget':
         report += f"💰 Наши агенты докладывают, что текущий бюджет цели составляет: **${target_player_data.get('budget', 0)}**."
     elif intel_type == 'nukes':
@@ -278,13 +287,13 @@ async def espionage_process_target(message: types.Message, state: FSMContext):
                 highest_bunker = data['bunker_level']
                 city_with_bunker = city
         if highest_bunker > 0:
-            report += f"-u- Система гражданской обороны: обнаружен бункер **уровня {highest_bunker}** в городе **{city_with_bunker}**."
+            report += f"🕳️ Система гражданской обороны: обнаружен бункер **уровня {highest_bunker}** в городе **{city_with_bunker}**."
         else:
-            report += "-u- Система гражданской обороны: значительных бункерных сооружений не обнаружено."
-
-    await message.answer("Шпионская операция завершена. Отчет доставлен в ваш личный кабинет.",
+            report += "🕳️ Система гражданской обороны: значительных бункерных сооружений не обнаружено."
+    await message.answer("Шпионская операция завершена. Отчет доставлен.",
                          reply_markup=main_menu(user_id))
     await message.answer(report, parse_mode="Markdown")
+
 
 # --- Строительство бункера ---
 @router.message(PlayerFilter(is_admin=False), F.text == "🧱 Построить бункер")
@@ -292,11 +301,8 @@ async def bunker_start(message: types.Message, state: FSMContext):
     if not is_player_in_game(message): return await not_in_game_answer(message)
     user_id = message.from_user.id
     player = game_state.players[user_id]
-
     if player['actions_left'] <= 0:
         return await message.answer("❌ Нет действий в этом раунде.", reply_markup=main_menu(user_id))
-
-    # Формируем список городов с информацией о бункерах и стоимости следующего уровня
     city_options = []
     for city_name, city_data in player["cities"].items():
         current_level = city_data.get("bunker_level", 0)
@@ -304,11 +310,9 @@ async def bunker_start(message: types.Message, state: FSMContext):
             next_level = current_level + 1
             cost = config.BUNKER_COSTS[next_level]
             city_options.append(f"{city_name} (ур. {current_level} -> {next_level}, ${cost})")
-
     if not city_options:
         return await message.answer("Все ваши города уже имеют бункеры максимального уровня.",
                                     reply_markup=main_menu(user_id))
-
     kb_rows = [[KeyboardButton(text=option)] for option in city_options] + [[KeyboardButton(text="Отмена")]]
     await message.answer("Выберите город для строительства/улучшения бункера:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
@@ -320,41 +324,36 @@ async def bunker_process(message: types.Message, state: FSMContext):
     await state.clear()
     selected_option = message.text.strip()
     user_id = message.from_user.id
-
     if selected_option == "Отмена":
         return await message.answer("Действие отменено.", reply_markup=main_menu(user_id))
-
     try:
         city_name = selected_option.split(" (ур.")[0]
     except:
         return await message.answer("Неверный выбор. Пожалуйста, используйте кнопки.", reply_markup=main_menu(user_id))
-
     player = game_state.players[user_id]
     if city_name not in player["cities"]:
         return await message.answer("Неверный город.", reply_markup=main_menu(user_id))
-
     city_data = player["cities"][city_name]
     current_level = city_data.get("bunker_level", 0)
-
     if current_level >= config.MAX_BUNKER_LEVEL:
         return await message.answer("Этот город уже имеет бункер максимального уровня.",
                                     reply_markup=main_menu(user_id))
-
     next_level = current_level + 1
     cost = config.BUNKER_COSTS[next_level]
-
     if player["budget"] < cost:
         return await message.answer(f"Недостаточно бюджета. Требуется ${cost}.", reply_markup=main_menu(user_id))
     if player['actions_left'] <= 0:
         return await message.answer("Ошибка: нет очков действий.", reply_markup=main_menu(user_id))
-
-    # --- Проводим улучшение ---
     player["budget"] -= cost
     player["actions_left"] -= 1
     city_data["bunker_level"] = next_level
 
-    game_state.round_events.append({'type': 'BUNKER_BUILT', 'country': player['country']})
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🧱 <b>{player['country']}</b> построил(а) бункер <b>уровня {next_level}</b> в городе <b>{city_name}</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
 
+    game_state.round_events.append({'type': 'BUNKER_BUILT', 'country': player['country']})
     await message.answer(
         f"✅ Бункер в городе **{city_name}** улучшен до **уровня {next_level}** за ${cost}!\n\n"
         f"Ваш бюджет: ${player['budget']}\n"
@@ -362,19 +361,18 @@ async def bunker_process(message: types.Message, state: FSMContext):
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
+
+
 # --- Социальная программа ---
 @router.message(PlayerFilter(is_admin=False), F.text == "🎉 Соц. программа")
 async def social_program_start(message: types.Message, state: FSMContext):
     if not is_player_in_game(message): return await not_in_game_answer(message)
     user_id = message.from_user.id
     player = game_state.players[user_id]
-    if player['actions_left'] <= 0:
-        return await message.answer("❌ Нет действий в этом раунде.", reply_markup=main_menu(user_id))
     if player.get("social_programs_this_round", 0) >= config.MAX_SOCIAL_PROGRAMS_PER_ROUND:
         return await message.answer(f"❌ Лимит соц. программ ({config.MAX_SOCIAL_PROGRAMS_PER_ROUND}).")
     if player['budget'] < config.SOCIAL_PROGRAM_COST:
         return await message.answer(f"Недостаточно средств. Нужно ${config.SOCIAL_PROGRAM_COST}.")
-
     kb_rows = [[KeyboardButton(text=city)] for city in player["cities"].keys()] + [[KeyboardButton(text="Отмена")]]
     keyboard = ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True)
     await message.answer(f"Запуск соц. программы стоит ${config.SOCIAL_PROGRAM_COST}.\n"
@@ -383,16 +381,20 @@ async def social_program_start(message: types.Message, state: FSMContext):
     await state.set_state(SocialProgram.choosing_city)
 
 
-# handlers.py
-
-async def social_program_logic(message: types.Message, city_name: str):
+@router.message(SocialProgram.choosing_city)
+async def social_program_process_city(message: types.Message, state: FSMContext):
+    await state.clear()
+    city_name = message.text.strip()
     user_id = message.from_user.id
+    if city_name == "Отмена":
+        return await message.answer("Действие отменено.", reply_markup=main_menu(user_id))
     player = game_state.players[user_id]
-
+    if city_name not in player['cities']:
+        return await message.answer("Неверный город.", reply_markup=main_menu(user_id))
+    if player['budget'] < config.SOCIAL_PROGRAM_COST:
+        return await message.answer(f"Недостаточно средств. Действие отменено.", reply_markup=main_menu(user_id))
     player['budget'] -= config.SOCIAL_PROGRAM_COST
-    player['actions_left'] -= 1
     player['social_programs_this_round'] = player.get("social_programs_this_round", 0) + 1
-
     city_data = player['cities'][city_name]
     old_qol = city_data['qol']
     if old_qol >= 90:
@@ -402,13 +404,18 @@ async def social_program_logic(message: types.Message, city_name: str):
     elif old_qol >= 70:
         qol_increase = random.randint(3, 7)
     else:
-        qol_increase = random.randint(5, 10)  # Стандартный бонус
+        qol_increase = random.randint(5, 10)
     city_data['qol'] = min(100, old_qol + qol_increase)
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🎉 <b>{player['country']}</b> запустил(а) соц. программу в городе <b>{city_name}</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     game_state.round_events.append({'type': 'SOCIAL_PROGRAM', 'country': player['country']})
     await message.answer(f"🎉 Соц. программа в городе {city_name} запущена за ${config.SOCIAL_PROGRAM_COST}!\n"
                          f"Уровень жизни: {old_qol}% ↗️ {city_data['qol']}% (+{qol_increase}%)\n\n"
-                         f"Ваш бюджет: ${player['budget']}.\n"
-                         f"Осталось действий: {player['actions_left']}.",
+                         f"Ваш бюджет: ${player['budget']}.",
                          reply_markup=main_menu(user_id))
 
 
@@ -418,13 +425,11 @@ async def upgrade_city_start(message: types.Message, state: FSMContext):
     if not is_player_in_game(message): return await not_in_game_answer(message)
     user_id = message.from_user.id
     player = game_state.players[user_id]
-
     if player['actions_left'] <= 0:
         return await message.answer("❌ Нет действий в этом раунде.", reply_markup=main_menu(user_id))
     if player.get("upgrades_this_round", 0) >= config.MAX_UPGRADES_PER_ROUND:
         return await message.answer(f"❌ Лимит улучшений ({config.MAX_UPGRADES_PER_ROUND}).",
                                     reply_markup=main_menu(user_id))
-
     kb_rows = [[KeyboardButton(text=city)] for city in player["cities"].keys()] + [[KeyboardButton(text="Отмена")]]
     await message.answer("Выбери город для улучшения:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
@@ -435,59 +440,14 @@ async def upgrade_city_start(message: types.Message, state: FSMContext):
 async def upgrade_city_process(message: types.Message, state: FSMContext):
     await state.clear()
     city_name = message.text.strip()
-    if city_name == "Отмена":
-        return await message.answer("Действие отменено.", reply_markup=main_menu(message.from_user.id))
-    if city_name not in game_state.players[message.from_user.id]["cities"]:
-        return await message.answer("Неверный город.", reply_markup=main_menu(message.from_user.id))
-    await upgrade_city_logic(message)
-
-
-@router.message(SocialProgram.choosing_city)
-async def social_program_process_city(message: types.Message, state: FSMContext):
-    """Обрабатывает выбор города и запускает программу."""
-    await state.clear()  # Сразу сбрасываем состояние
-    city_name = message.text.strip()
     user_id = message.from_user.id
 
     if city_name == "Отмена":
         return await message.answer("Действие отменено.", reply_markup=main_menu(user_id))
+    if city_name not in game_state.players[user_id]["cities"]:
+        return await message.answer("Неверный город.", reply_markup=main_menu(user_id))
+    await upgrade_city_logic(message)
 
-    player = game_state.players[user_id]
-    if city_name not in player['cities']:
-        return await message.answer("Неверный город. Пожалуйста, выберите из списка.", reply_markup=main_menu(user_id))
-
-    # Повторная проверка бюджета на случай изменений
-    if player['budget'] < config.SOCIAL_PROGRAM_COST:
-        return await message.answer(f"Недостаточно средств (${config.SOCIAL_PROGRAM_COST}). Действие отменено.",
-                                    reply_markup=main_menu(user_id))
-
-    # --- ВСТАВЛЕНА ОСНОВНАЯ ЛОГИКА ---
-    player['budget'] -= config.SOCIAL_PROGRAM_COST
-    player['actions_left'] -= 1
-    player['social_programs_this_round'] = player.get("social_programs_this_round", 0) + 1
-
-    city_data = player['cities'][city_name]
-    old_qol = city_data['qol']
-
-    # Ступенчатая логика
-    if old_qol >= 90:
-        qol_increase = random.randint(2, 4)
-    elif old_qol >= 80:
-        qol_increase = random.randint(3, 5)
-    elif old_qol >= 70:
-        qol_increase = random.randint(3, 7)
-    else:
-        qol_increase = random.randint(5, 10)
-
-    city_data['qol'] = min(100, old_qol + qol_increase)
-
-    game_state.round_events.append({'type': 'SOCIAL_PROGRAM', 'country': player['country']})
-
-    await message.answer(f"🎉 Соц. программа в городе {city_name} запущена за ${config.SOCIAL_PROGRAM_COST}!\n"
-                         f"Уровень жизни: {old_qol}% ↗️ {city_data['qol']}% (+{qol_increase}%)\n\n"
-                         f"Ваш бюджет: ${player['budget']}.\n"
-                         f"Осталось действий: {player['actions_left']}.",
-                         reply_markup=main_menu(user_id))
 
 # --- Ленд-лиз ---
 @router.message(PlayerFilter(is_admin=False), F.text == "🤝 Оказать помощь")
@@ -495,17 +455,12 @@ async def lend_lease_start(message: types.Message, state: FSMContext):
     if not is_player_in_game(message): return await not_in_game_answer(message)
     user_id = message.from_user.id
     player = game_state.players[user_id]
-    if player['actions_left'] <= 0:
-        return await message.answer("❌ Нет действий в этом раунде.", reply_markup=main_menu(user_id))
-
     if player['budget'] <= 0:
         return await message.answer("Ваша казна пуста.", reply_markup=main_menu(user_id))
-
     other_countries = [p["country"] for uid, p in game_state.players.items() if
                        uid != user_id and p.get("country") and not p.get("eliminated")]
     if not other_countries:
         return await message.answer("Нет других стран для оказания помощи.", reply_markup=main_menu(user_id))
-
     kb_rows = [[KeyboardButton(text=c)] for c in other_countries] + [[KeyboardButton(text="Отмена")]]
     await message.answer("Выберите страну для оказания помощи:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True))
@@ -577,6 +532,12 @@ async def lend_lease_confirm(message: types.Message, state: FSMContext):
     sender['budget'] -= amount
     receiver['budget'] += amount
     sender['actions_left'] -= 1
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🤝 <b>{sender['country']}</b> отправил(а) <code>${amount}</code> помощи стране <b>{receiver['country']}</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     await message.answer(f"✅ Успешно! Вы отправили ${amount} в страну {receiver['country']}.\n"
                          f"Ваш новый бюджет: ${sender['budget']}.\n"
                          f"Осталось действий: {sender['actions_left']}.",
@@ -622,7 +583,8 @@ async def attack_choose_target(message: types.Message, state: FSMContext):
         return await message.answer("Страна не найдена. Выбери из списка.")
     await state.update_data(target_uid=target_uid)
     target_player = game_state.players[target_uid]
-    kb_rows = [[KeyboardButton(text=c + (" (разрушен)" if d.get("level", 0) == 0 else ""))] for c, d in target_player["cities"].items()]
+    kb_rows = [[KeyboardButton(text=c + (" (разрушен)" if d.get("level", 0) == 0 else ""))] for c, d in
+               target_player["cities"].items()]
     await message.answer(f"Цель — {text}. Выбери город для удара:",
                          reply_markup=ReplyKeyboardMarkup(keyboard=kb_rows + [[KeyboardButton(text="Отмена")]],
                                                           resize_keyboard=True))
@@ -633,10 +595,11 @@ async def attack_choose_target(message: types.Message, state: FSMContext):
 async def attack_choose_city(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     target_uid = user_data.get("target_uid")
-    await state.clear()
     if message.text.strip() == "Отмена":
+        await state.clear()
         return await message.answer("Атака отменена.", reply_markup=main_menu(message.from_user.id))
-    await attack_final_step_logic(message, target_uid)
+    # Важно: Не очищаем state здесь, так как он нужен в attack_final_step_logic
+    await attack_final_step_logic(message, target_uid, state)
 
 
 # --- Переговоры ---
@@ -683,7 +646,8 @@ async def surrender_process(message: types.Message, state: FSMContext):
 # --- ГЛОБАЛЬНЫЕ СОБЫТИЯ ---
 # =====================================================================================
 
-@router.message(PlayerFilter(is_admin=False), F.text.in_({"💉 Сделать взнос в фонд", "✅ Инвестировать в проект"}))
+@router.message(PlayerFilter(is_admin=False), F.text.in_(
+    {"💉 Сделать взнос в фонд", "✅ Инвестировать в проект", "🔧 Помочь в восстановлении", "💰 Связаться с торговцем"}))
 async def handle_global_event_interaction(message: types.Message, state: FSMContext):
     """Единый обработчик для всех кнопок глобальных событий."""
     if not is_player_in_game(message): return await not_in_game_answer(message)
@@ -727,19 +691,25 @@ async def global_event_process_investment(message: types.Message, state: FSMCont
 
     event_id = game_state.active_global_event['id']
     event_class = EVENT_CLASSES[event_id]
-    goal = event_class.goal_amount  # <-- ИСПРАВЛЕНО
+    goal = event_class.goal_amount
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"💡 <b>{player['country']}</b> инвестировал(а) <code>${amount}</code> в проект <b>'{event_class.name}'</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
 
     await message.answer(f"✅ Вы инвестировали ${amount}.\nВаш общий вклад: **${new_total_investment} / ${goal}**\n"
                          f"Ваш новый бюджет: ${player['budget']}",
                          parse_mode="Markdown", reply_markup=main_menu(user_id))
 
     if new_total_investment >= goal:
+        log_text = f"🏆 Событие <b>'{event_class.name}'</b> успешно завершено! Победитель: <b>{player['country']}</b>."
+        await log_action(message.bot, log_text)
+        await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
         event_object = event_class(message.bot, game_state.active_global_event)
         await event_object.on_success(game_state.players, winner_player=player)
         game_state.active_global_event = None
 
-
-# handlers.py
 
 @router.message(GlobalEvent.confirming_black_market)
 async def global_event_process_black_market(message: types.Message, state: FSMContext):
@@ -750,7 +720,6 @@ async def global_event_process_black_market(message: types.Message, state: FSMCo
     if message.text != "✅ Подтвердить сделку":
         return await message.answer("Сделка отменена.", reply_markup=main_menu(user_id))
 
-    # Проверяем, не закончилось ли событие, пока игрок думал
     if not game_state.active_global_event or game_state.active_global_event.get('id') != 'BLACK_MARKET':
         return await message.answer("Торговец уже уплыл. Сделка невозможна.", reply_markup=main_menu(user_id))
 
@@ -758,17 +727,23 @@ async def global_event_process_black_market(message: types.Message, state: FSMCo
     event_class = EVENT_CLASSES['BLACK_MARKET']
     cost = event_class.goal_amount
 
-    # Финальная проверка бюджета
     if player['budget'] < cost:
         return await message.answer(f"За время раздумий у вас стало недостаточно средств. Сделка отменена.",
                                     reply_markup=main_menu(user_id))
 
-    # --- Проводим транзакцию ---
     player['budget'] -= cost
+    log_text = f"🏆 Событие <b>'{event_class.name}'</b> успешно завершено! Победитель: <b>{player['country']}</b>."
+    await log_action(message.bot, log_text)
+    await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🤫 <b>{player['country']}</b> заключил(а) сделку на чёрном рынке, получив 2 ракеты за <code>${cost}</code>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     event_object = event_class(message.bot, game_state.active_global_event)
     await event_object.on_success(players=game_state.players, winner_player=player)
 
-    game_state.active_global_event = None  # Завершаем событие
+    game_state.active_global_event = None
 
     await message.answer(
         f"✅ Контракт подписан! Вы потратили ${cost}. 2 ракеты добавлены в ваш арсенал.\n"
@@ -776,11 +751,14 @@ async def global_event_process_black_market(message: types.Message, state: FSMCo
         reply_markup=main_menu(user_id)
     )
 
+
 @router.message(GlobalEvent.entering_contribution)
 async def global_event_process_contribution(message: types.Message, state: FSMContext):
+    """Универсальный обработчик для всех событий-кризисов."""
     await state.clear()
     if message.text.strip().lower() == "отмена":
         return await message.answer("Действие отменено.", reply_markup=main_menu(message.from_user.id))
+
     try:
         amount = int(message.text.strip())
         if amount <= 0: raise ValueError
@@ -792,12 +770,20 @@ async def global_event_process_contribution(message: types.Message, state: FSMCo
     if player['budget'] < amount:
         return await message.answer(f"У вас недостаточно средств.", reply_markup=main_menu(message.from_user.id))
 
+    if not game_state.active_global_event:
+        return await message.answer("Событие уже закончилось.", reply_markup=main_menu(message.from_user.id))
+
     player['budget'] -= amount
     game_state.active_global_event['progress'] = game_state.active_global_event.get('progress', 0) + amount
 
     event_id = game_state.active_global_event['id']
     event_class = EVENT_CLASSES[event_id]
-    goal = event_class.goal_amount  # <-- ИСПРАВЛЕНО
+    goal = event_class.goal_amount
+
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🌍 <b>{player['country']}</b> внёс(внесла) <code>${amount}</code> в общий фонд события <b>'{event_class.name}'</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
 
     progress = game_state.active_global_event['progress']
     await message.answer(f"✅ Вы внесли ${amount} в общий фонд.\nПрогресс: **${progress} / ${goal}**\n"
@@ -805,6 +791,9 @@ async def global_event_process_contribution(message: types.Message, state: FSMCo
                          parse_mode="Markdown", reply_markup=main_menu(message.from_user.id))
 
     if progress >= goal:
+        log_text = f"✅ Кризис <b>'{event_class.name}'</b> успешно преодолён общими усилиями."
+        await log_action(message.bot, log_text)
+        await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
         event_object = event_class(message.bot, game_state.active_global_event)
         await event_object.on_success(game_state.players)
         game_state.active_global_event = None
@@ -823,14 +812,12 @@ async def handle_negotiation_response(callback: types.CallbackQuery):
 async def handle_corsair_choice(callback: types.CallbackQuery, state: FSMContext):
     """Обрабатывает выбор агрессора: разграбить или сжечь город."""
     user_data = await state.get_data()
-    await state.clear()  # Сразу сбрасываем состояние
+    await state.clear()
 
-    # --- Получаем данные из сохраненного состояния ---
     attacker_id = user_data.get('attacker_id')
     target_id = user_data.get('target_id')
     city_name = user_data.get('city_name')
 
-    # Проверка на случай, если что-то пошло не так
     if not all([attacker_id, target_id, city_name]):
         await callback.message.edit_text("Произошла ошибка. Данные об атаке утеряны.")
         return await callback.answer("Ошибка", show_alert=True)
@@ -839,18 +826,18 @@ async def handle_corsair_choice(callback: types.CallbackQuery, state: FSMContext
     target = game_state.players[target_id]
     city = target["cities"][city_name]
 
-    # --- Обрабатываем выбор игрока ---
     if callback.data == 'corsair_loot':
-        # Логика грабежа
         stolen_amount = int(target['budget'] * 0.25)
         attacker['budget'] += stolen_amount
         target['budget'] -= stolen_amount
-
         city['level'], city['income'] = 0, 0
-        # При грабеже QoL просто сильно падает, но не до минимума, как при сожжении
         city['qol'] = max(0, city['qol'] - random.randint(25, 40))
 
-        # Сообщаем игрокам
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"💰 <b>{attacker['country']}</b> разграбил(а) город <b>{city_name}</b> ({target['country']}), украв <code>${stolen_amount}</code>."
+        await log_action(callback.bot, log_text)
+        # ---------------------
+
         await callback.message.edit_text(
             f"✅ Город разграблен! Вы украли ${stolen_amount} из казны {target['country']}.")
         try:
@@ -862,10 +849,8 @@ async def handle_corsair_choice(callback: types.CallbackQuery, state: FSMContext
             print(f"Error notifying target about loot: {e}")
 
     elif callback.data == 'corsair_burn':
-        # Логика сожжения дотла
         city['level'], city['income'] = 0, 0
         city['ruined'] = True
-        # При сожжении QoL падает до минимума, но бункер может спасти
         bunker_level = city.get("bunker_level", 0)
         min_qol = 0
         if bunker_level > 0:
@@ -874,7 +859,11 @@ async def handle_corsair_choice(callback: types.CallbackQuery, state: FSMContext
         else:
             city['qol'] = random.randint(1, 5)
 
-        # Сообщаем игрокам
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🔥 <b>{attacker['country']}</b> сжёг(сожгла) дотла город <b>{city_name}</b> ({target['country']})."
+        await log_action(callback.bot, log_text)
+        # ---------------------
+
         await callback.message.edit_text(f"✅ Город {city_name} сожжён дотла! Его экономика навсегда искалечена.")
         try:
             await callback.bot.send_message(target_id,
@@ -884,25 +873,27 @@ async def handle_corsair_choice(callback: types.CallbackQuery, state: FSMContext
         except Exception as e:
             print(f"Error notifying target about burn: {e}")
 
-    await callback.answer()  # Убираем "часики" с кнопки
+    await callback.answer()
 
-    # --- ПРОВЕРКА НА ПОЛНОЕ УНИЧТОЖЕНИЕ СТРАНЫ (вставлена сюда!) ---
     if all(c.get("level", 0) == 0 for c in target["cities"].values()):
         target["eliminated"] = True
+
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"☠️ Страна <b>{target['country']}</b> была полностью уничтожена усилиями <b>{attacker['country']}</b>."
+        await log_action(callback.bot, log_text)
+        # ---------------------
+
         game_state.round_events.append(
             {'type': 'COUNTRY_ELIMINATED', 'attacker': attacker['country'], 'country': target['country']}
         )
-
-        # Сообщаем атакующему о полной победе
         await callback.bot.send_message(attacker_id,
                                         f"☠️ **ПОЛНОЕ УНИЧТОЖЕНИЕ!** Страна {target['country']} полностью разрушена вашими действиями!")
-
-        # Сообщаем защитнику о полном поражении
         try:
             await callback.bot.send_message(target_id, "Все ваши города разрушены. Вы выбыли из игры.",
                                             reply_markup=ReplyKeyboardRemove())
         except Exception as e:
             print(f"Error notifying eliminated player: {e}")
+
 
 # =====================================================================================
 # --- ГАЗЕТА ---
@@ -963,12 +954,6 @@ async def show_statistics_logic(message: types.Message):
     await message.answer(text, reply_markup=main_menu(message.from_user.id))
 
 
-# handlers.py
-
-# handlers.py
-
-# handlers.py
-
 async def overview_countries_logic(message: types.Message):
     text = "🌍 Обзор всех стран:\n\n"
     active_players = [p for p in game_state.players.values() if p.get("country") and not p.get('eliminated')]
@@ -1004,8 +989,6 @@ async def overview_countries_logic(message: types.Message):
     await message.answer(text, parse_mode="HTML", reply_markup=main_menu(message.from_user.id))
 
 
-# handlers.py
-
 async def produce_nuclear_logic(message: types.Message):
     user_id = message.from_user.id
     p = game_state.players[user_id]
@@ -1014,9 +997,13 @@ async def produce_nuclear_logic(message: types.Message):
         p["pending_nukes"] += 1
         p["actions_left"] -= 1
 
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🚀 <b>{p['country']}</b> начал(а) производство ядерной ракеты."
+        await log_action(message.bot, log_text)
+        # ---------------------
+
         game_state.round_events.append({'type': 'NUKE_PRODUCED', 'country': p['country']})
 
-        # Возвращаем простое и понятное сообщение
         await message.answer(
             f"✅ Ядерная бомба запущена в производство.\n\n"
             f"Осталось действий: {p['actions_left']}",
@@ -1025,10 +1012,6 @@ async def produce_nuclear_logic(message: types.Message):
     else:
         await message.answer(f"Недостаточно бюджета ({config.NUKE_COST}).", reply_markup=main_menu(user_id))
 
-
-# handlers.py
-
-# handlers.py
 
 async def create_shield_logic(message: types.Message):
     user_id = message.from_user.id
@@ -1049,6 +1032,11 @@ async def create_shield_logic(message: types.Message):
         p["shields"] += 1
         p["shields_built_this_round"] = p.get("shields_built_this_round", 0) + 1
         p["actions_left"] -= 1
+
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🛡️ <b>{p['country']}</b> создал(а) защитный щит. Всего щитов: {p['shields']}."
+        await log_action(message.bot, log_text)
+        # ---------------------
 
         game_state.round_events.append({'type': 'SHIELD_BUILT', 'country': p['country']})
 
@@ -1072,7 +1060,6 @@ async def upgrade_city_logic(message: types.Message):
     if city_to_upgrade["level"] >= config.MAX_CITY_LEVEL:
         return await message.answer(f"{city_name} уже достиг максимального уровня!", reply_markup=main_menu(user_id))
 
-    # --- Основная логика ---
     player["budget"] -= cost
     player["actions_left"] -= 1
     player["upgrades_this_round"] = player.get("upgrades_this_round", 0) + 1
@@ -1080,7 +1067,6 @@ async def upgrade_city_logic(message: types.Message):
     city_to_upgrade["level"] += 1
     city_to_upgrade["income"] += 500
 
-    # --- СТУПЕНЧАТАЯ ЛОГИКА ПРИРОСТА QoL ---
     old_qol_upgraded = city_to_upgrade['qol']
     if old_qol_upgraded >= 90:
         qol_bonus = random.randint(2, 4)
@@ -1089,11 +1075,9 @@ async def upgrade_city_logic(message: types.Message):
     elif old_qol_upgraded >= 70:
         qol_bonus = random.randint(3, 7)
     else:
-        qol_bonus = random.randint(7, 15)  # Стандартный большой бонус за апгрейд
+        qol_bonus = random.randint(7, 15)
     city_to_upgrade['qol'] = min(100, old_qol_upgraded + qol_bonus)
-    # -----------------------------------------
 
-    # Понижаем QoL в ОСТАЛЬНЫХ городах
     qol_penalty = random.randint(1, 3)
     penalty_report_lines = []
     for city_name_loop, city_data in player["cities"].items():
@@ -1102,9 +1086,13 @@ async def upgrade_city_logic(message: types.Message):
             city_data['qol'] = max(0, old_qol_penalty - qol_penalty)
             penalty_report_lines.append(f"  • {city_name_loop}: {old_qol_penalty}% ↘️ {city_data['qol']}%")
 
+    # --- ЛОГ ДЕЙСТВИЯ ---
+    log_text = f"🏙️ <b>{player['country']}</b> улучшил(а) город <b>{city_name}</b> до <b>уровня {city_to_upgrade['level']}</b>."
+    await log_action(message.bot, log_text)
+    # ---------------------
+
     game_state.round_events.append({'type': 'CITY_UPGRADED', 'country': player['country']})
 
-    # Собираем красивый отчет
     response_text = (
         f"✅ Город **{city_name}** улучшен за **${cost}**!\n\n"
         f"📈 **{city_name}:**\n"
@@ -1125,8 +1113,6 @@ async def upgrade_city_logic(message: types.Message):
     if all(c["qol"] >= 100 for c in player["cities"].values()):
         await message.answer(f"🎉 **ПОЗДРАВЛЯЕМ!** {player['country']} победила в игре, достигнув 100% уровня жизни!")
 
-
-# handlers.py
 
 async def attack_final_step_logic(message: types.Message, target_uid: int, state: FSMContext):
     user_id = message.from_user.id
@@ -1154,8 +1140,12 @@ async def attack_final_step_logic(message: types.Message, target_uid: int, state
     bunker_level = city_under_attack.get("bunker_level", 0)
 
     if target_player["shields"] > 0 and not ignore_shields:
-        # --- СЦЕНАРИЙ: АТАКА ОТРАЖЕНА ЩИТОМ ---
         target_player["shields"] -= 1
+
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🛡️ <b>{attacker['country']}</b> атаковал(а) <b>{target_player['country']}</b>, но удар был отражен щитом."
+        await log_action(message.bot, log_text)
+        # ---------------------
 
         qol_penalty_main = random.randint(10, 15)
         qol_penalty_other = random.randint(1, 3)
@@ -1191,31 +1181,32 @@ async def attack_final_step_logic(message: types.Message, target_uid: int, state
             print(f"Error notifying defender about shield: {e}")
 
     else:
-        # --- СЦЕНАРИЙ: ПРЯМОЕ ПОПАДАНИЕ - ПРЕДЛАГАЕМ ВЫБОР ---
         if ignore_shields and target_player["shields"] > 0:
             await message.answer("💥 **Солнечная вспышка деактивировала щиты! Атака прошла беспрепятственно!**",
                                  parse_mode="Markdown")
 
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"💥 <b>{attacker['country']}</b> успешно атаковал(а) город <b>{city_name}</b> ({target_player['country']})."
+        await log_action(message.bot, log_text)
+        # ---------------------
+
         await message.answer(f"🚀 **Успех! Город {city_name} ({target_player['country']}) беззащитен!**",
                              reply_markup=main_menu(user_id))
 
-        # Сохраняем данные для следующего шага
         await state.update_data(attacker_id=user_id, target_id=target_uid, city_name=city_name)
 
-        # Создаем инлайн-кнопки для выбора
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💰 Разграбить (Украсть 25% бюджета)", callback_data="corsair_loot")],
             [InlineKeyboardButton(text="🔥 Сжечь дотла (Искалечить экономику)", callback_data="corsair_burn")]
         ])
 
-        # Отправляем сообщение с выбором в личку атакующему, чтобы не засорять чат игры, если он общий
         await message.bot.send_message(
             user_id,
             f"Какова ваша цель, командир? Город {city_name} в руинах, казна {target_player['country']} открыта.",
             reply_markup=keyboard
         )
-        # Устанавливаем состояние ожидания выбора
         await state.set_state(CorsairChoice.making_choice)
+
 
 async def negotiation_logic(message: types.Message):
     user_id, text = message.from_user.id, message.text.strip()
@@ -1242,6 +1233,12 @@ async def surrender_logic(message: types.Message):
         player = game_state.players[user_id]
         player["eliminated"] = True
         for city in player["cities"].values(): city["level"], city["income"], city["qol"] = 0, 0, 0
+
+        # --- ЛОГ ДЕЙСТВИЯ ---
+        log_text = f"🏳️ <b>{player['country']}</b> капитулировал(а) и покинул(а) игру."
+        await log_action(message.bot, log_text)
+        # ---------------------
+
         game_state.round_events.append({'type': 'SURRENDERED', 'country': player['country']})
         await message.answer("Вы капитулировали и выбыли из игры.", reply_markup=ReplyKeyboardRemove())
         try:
@@ -1265,9 +1262,10 @@ async def toggle_ready_status_logic(message: types.Message):
                       p.get("country") and not p.get("eliminated") and uid != config.ADMIN_ID]
     if active_players and all(p.get("ready_for_next_round") for p in active_players):
         try:
-            await message.bot.send_message(config.ADMIN_ID, "✅ Все активные игроки готовы к следующему раунд!")
+            await message.bot.send_message(config.ADMIN_ID, "✅ Все активные игроки готовы к следующему раунду!")
         except Exception as e:
             print(f"Error notifying admin 'all ready': {e}")
+
 
 async def call_admin_logic(message: types.Message):
     user_id = message.from_user.id
@@ -1315,4 +1313,3 @@ async def negotiation_response_logic(callback: types.CallbackQuery):
         print(f"Could not send negotiation response to initiator {initiator_id}: {e}")
     await callback.message.edit_text(responder_msg, parse_mode="HTML", reply_markup=None)
     await callback.answer()
-

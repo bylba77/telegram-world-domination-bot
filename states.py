@@ -48,10 +48,11 @@ class GlobalEvent(StatesGroup):
 class Bunker(StatesGroup):
     choosing_city = State()
 
-
 class CorsairChoice(StatesGroup):
     making_choice = State()
 
-
 class Espionage(StatesGroup):
     choosing_target = State()
+
+class AdminTools(StatesGroup):
+    choosing_event_to_force = State()
