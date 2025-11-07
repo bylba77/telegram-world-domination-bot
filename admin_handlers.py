@@ -496,28 +496,34 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
                 game_state.event_cooldowns[event_id] = 3
                 game_state.active_global_event = None
 
-        elif random.random() < 0.33:  # 33% шанс на событие
+
+        elif random.random() < 0.33:
+
             available_events = [eid for eid in EVENT_CLASSES.keys() if eid not in game_state.event_cooldowns]
+
             if available_events:
-                event_id = random.choice(available_events)
+                world_state = get_world_state_analysis()
+                event_weights = calculate_event_weights(available_events, world_state)
+                event_id = random.choices(available_events, weights=event_weights, k=1)[0]
+
                 event_class = EVENT_CLASSES[event_id]
                 new_event_data = {
                     "id": event_id,
                     "progress": 0,
                     "rounds_left": event_class.duration
-                }
 
+                }
                 game_state.active_global_event = new_event_data
                 game_state.event_cooldowns[event_id] = 3
                 event_object = event_class(message.bot, new_event_data)
                 start_msg = await event_object.get_start_message()
-                log_text = f"🌍 Случайно началось новое событие: <b>{event_class.name}</b>."
+
+                log_text = f"🌍 <b>Началось новое событие: {event_class.name}</b> (Выбрано на основе ситуации в мире)."
                 await log_action(message.bot, log_text)
                 await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) {log_text}", parse_mode="HTML")
                 for uid, p in game_state.players.items():
                     if p.get("country") and not p.get("eliminated"):
                         await message.bot.send_message(uid, start_msg, parse_mode="Markdown")
-                await message.bot.send_message(config.ADMIN_ID, f"🔔 (Для админа) Запущено событие: {event_class.name}")
 
         game_state.round_events.clear()
         game_state.current_round += 1
@@ -606,6 +612,85 @@ async def admin_next_round_logic(message: types.Message, state: FSMContext):
         game_state.is_processing_next_round = False
 
 
+def get_world_state_analysis():
+    """
+    Анализирует game_state и возвращает простую сводку о состоянии мира.
+    """
+    total_nukes = 0
+    total_cities = 0
+    total_qol = 0
+
+    # Собираем данные только по живым игрокам
+    active_players = [p for p in game_state.players.values() if p.get("country") and not p.get("eliminated")]
+    if not active_players:
+        # Если игроков нет, возвращаем "мирное" состояние
+        return {'total_nukes': 0, 'avg_qol': 70}
+
+    for player in active_players:
+        # Считаем общее количество ракет в производстве и готовых
+        total_nukes += player.get('ready_nukes', 0) + player.get('pending_nukes', 0)
+
+        # Считаем средний уровень жизни
+        player_cities = player.get('cities', {}).values()
+        if player_cities:
+            for city in player_cities:
+                total_qol += city.get('qol', 50)
+                total_cities += 1
+
+    # Рассчитываем средние значения
+    avg_qol = (total_qol / total_cities) if total_cities > 0 else 70
+
+    return {
+        'total_nukes': total_nukes,
+        'avg_qol': avg_qol
+    }
+
+
+def calculate_event_weights(available_events, world_state):
+    weights = []
+
+    total_nukes = world_state.get('total_nukes', 0)
+    avg_qol = world_state.get('avg_qol', 70)
+
+    for event_id in available_events:
+        base_weight = 10  # Базовый шанс
+
+        if event_id == "PANDEMIC":
+            if avg_qol < 40:
+                base_weight += 50
+            if avg_qol > 80:
+                base_weight = 1
+
+        if event_id == "ENERGY_CRISIS":
+            if total_nukes > 5:
+                base_weight += 60
+            if total_nukes == 0:
+                base_weight = 1
+
+
+        if event_id == "TECH_BREAKTHROUGH":
+            if avg_qol > 75:
+                base_weight += 40
+            if total_nukes > 3:
+                base_weight = 1
+
+        if event_id == "BLACK_MARKET":
+            if total_nukes > 0:
+                base_weight += 20
+            if avg_qol < 50:
+                base_weight += 20
+
+
+        if event_id == "SOLAR_FLARE":
+            base_weight = 5
+
+        if event_id == "GLOBAL_ESPIONAGE":
+            if total_nukes > 2:
+                base_weight += 30
+
+        weights.append(max(1, base_weight))
+
+    return weights
 async def admin_restart_game_logic(message: types.Message, state: FSMContext):
     admin_data = game_state.players.get(config.ADMIN_ID)
     game_state.players.clear()
