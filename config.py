@@ -1,10 +1,24 @@
 # config.py
-
+import os
+from dotenv import load_dotenv
 # --- Основные настройки ---
-TOKEN = ""  # Твой токен, конечно же :)
-ADMIN_ID =
-LOG_CHANNEL_ID =-
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
+admin_id_str = os.getenv("ADMIN_ID")
+log_channel_id_str = os.getenv("LOG_CHANNEL_ID")
 
+if admin_id_str:
+    ADMIN_ID = int(admin_id_str)
+else:
+
+    print("!!! КРИТИЧЕСКАЯ ОШИБКА: ADMIN_ID не найден в .env !!!")
+    ADMIN_ID = 0
+
+if log_channel_id_str:
+    LOG_CHANNEL_ID = int(log_channel_id_str)
+else:
+    print("!!! ПРЕДУПРЕЖДЕНИЕ: LOG_CHANNEL_ID не найден в .env. Логирование не будет работать.")
+    LOG_CHANNEL_ID = 0
 
 # --- Игровой баланс ---
 SPY_COST = 1000
